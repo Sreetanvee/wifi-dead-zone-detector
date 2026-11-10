@@ -8,7 +8,8 @@ import time
 from urllib.request import Request, urlopen
 
 
-APP_URL = "http://127.0.0.1:5000/api/readings"
+STATUS_URL = "http://127.0.0.1:5000/api/survey/status"
+SENSOR_URL = "http://127.0.0.1:5000/api/sensor/readings"
 WLAN_INTF_OPCODE_RSSI = 0x10000102
 WLAN_INTERFACE_STATE_CONNECTED = 1
 
@@ -106,22 +107,23 @@ def read_connected_wifi_rssi():
 def main():
     if os.name != "nt":
         raise SystemExit("Run this sensor agent in Windows PowerShell, not inside Docker.")
-    location = input("Enter this measurement location (for example, Bedroom): ").strip()
-    if not location:
-        raise SystemExit("A location label is required.")
-
-    print("Reading the connected Wi-Fi adapter every 5 seconds. Press Ctrl+C to stop.")
+    print("Wi-Fi sensor is ready. Start and stop room measurements from the website.")
     while True:
         try:
-            rssi, adapter = read_connected_wifi_rssi()
-            body = json.dumps({"location": location, "rssi": rssi, "source": "Windows Wi-Fi adapter"}).encode("utf-8")
-            req = Request(APP_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
-            with urlopen(req, timeout=5) as response:
-                response.read()
-            print(f"{location}: {rssi} dBm via {adapter} — sent to Wi-Fi Signal Survey")
+            with urlopen(STATUS_URL, timeout=5) as response:
+                survey = json.loads(response.read().decode("utf-8"))
+            if survey.get("active"):
+                rssi, _adapter = read_connected_wifi_rssi()
+                body = json.dumps({"rssi": rssi}).encode("utf-8")
+                req = Request(SENSOR_URL, data=body, headers={"Content-Type": "application/json"}, method="POST")
+                with urlopen(req, timeout=5) as response:
+                    response.read()
+                print(f"{survey.get('location')}: {rssi} dBm")
         except Exception as error:
-            print(f"Sensor error: {error}")
-        time.sleep(5)
+            print(f"Waiting for the Wi-Fi survey app: {error}")
+            time.sleep(5)
+            continue
+        time.sleep(5 if survey.get("active") else 1)
 
 
 if __name__ == "__main__":

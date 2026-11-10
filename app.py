@@ -10,6 +10,7 @@ from flask import Flask, Response, jsonify, render_template_string, request
 app = Flask(__name__)
 THRESHOLD = -75
 readings = []
+survey_state = {"active": False, "location": ""}
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -29,10 +30,11 @@ PAGE = """<!doctype html>
   <h1>Wi-Fi Signal Survey</h1>
   <p class="muted">Measure the signal from the Wi-Fi network this Windows laptop is connected to, and record its strength by room.</p>
   <section class="card">
-    <h2>Live measurement</h2>
-    <p>Start the Windows sensor agent in a second PowerShell window. It reads the adapter's current RSSI every 5 seconds. Enter a room label in that window; the laptop's location is not detected automatically.</p>
-    <p><code>py wifi_agent.py</code></p>
-    <div id="live" class="status">Waiting for a measurement from the Windows sensor agent…</div>
+    <h2>Measure this room</h2>
+    <p>Enter a room label, then start the survey. The Windows sensor reads the connected Wi-Fi adapter automatically every five seconds while the survey is active.</p>
+    <form id="survey-form"><input id="location" name="location" placeholder="Room name (for example, Bedroom)" required><button type="submit">Start survey</button><button id="stop" type="button" disabled>Stop survey</button></form>
+    <div id="survey-status" class="status">Survey stopped. Start the sensor with Start Demo before measuring.</div>
+    <div id="live" class="status">Waiting for a measurement…</div>
     <p class="muted">RSSI means received Wi-Fi signal strength, measured in dBm. Values are negative; closer to 0 is stronger. This demo marks −75 dBm or weaker as a weak-signal area. The cutoff is a simple survey rule, not a universal Wi-Fi standard.</p>
   </section>
   <section class="card">
@@ -45,6 +47,10 @@ PAGE = """<!doctype html>
     async function refresh(){
       try{
         const d=await (await fetch('/api/readings')).json();
+        const survey=await (await fetch('/api/survey/status')).json();
+        document.querySelector('#location').value=survey.location||document.querySelector('#location').value;
+        document.querySelector('#stop').disabled=!survey.active;
+        document.querySelector('#survey-status').textContent=survey.active?`Survey active in ${survey.location}. Press Stop survey to finish.`:'Survey stopped.';
         const latest=d.readings[d.readings.length-1];
         const live=document.querySelector('#live');
         if(latest){live.className='status '+(latest.dead_zone?'warn':'good');live.textContent=`Latest: ${latest.rssi} dBm at “${latest.location}” — ${latest.dead_zone?'Weak signal':'Signal above the demo threshold'} · ${latest.time}`}
@@ -58,6 +64,8 @@ PAGE = """<!doctype html>
         document.querySelector('#empty').textContent=d.readings.length?'':'No measurements yet. Start the Windows sensor agent while connected to Wi-Fi.';
       }catch(e){document.querySelector('#live').textContent='Could not reach the app API.'}
     }
+    document.querySelector('#survey-form').onsubmit=async event=>{event.preventDefault();const room=document.querySelector('#location').value.trim();const r=await fetch('/api/survey/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:room})});const data=await r.json();document.querySelector('#survey-status').textContent=data.error||`Survey started in ${room}.`;refresh()};
+    document.querySelector('#stop').onclick=async()=>{await fetch('/api/survey/stop',{method:'POST'});refresh()};
     function downloadCsv(){location.href='/api/readings.csv'}
     refresh();setInterval(refresh,3000);
   </script>
@@ -100,6 +108,42 @@ def health():
 @app.get("/api/readings")
 def get_readings():
     return jsonify(threshold=THRESHOLD, readings=[asdict(x) for x in readings])
+
+
+@app.get("/api/survey/status")
+def get_survey_status():
+    return jsonify(survey_state)
+
+
+@app.post("/api/survey/start")
+def start_survey():
+    data = request.get_json(silent=True) or {}
+    location = str(data.get("location", "")).strip()
+    if not location:
+        return jsonify(error="Enter a room label first."), 400
+    survey_state.update(active=True, location=location[:120])
+    return jsonify(survey_state)
+
+
+@app.post("/api/survey/stop")
+def stop_survey():
+    survey_state["active"] = False
+    return jsonify(survey_state)
+
+
+@app.post("/api/sensor/readings")
+def add_sensor_reading():
+    if not survey_state["active"]:
+        return jsonify(error="Start the room survey first."), 409
+    data = request.get_json(silent=True) or {}
+    try:
+        rssi = int(data.get("rssi"))
+    except (TypeError, ValueError):
+        return jsonify(error="Sensor RSSI must be an integer"), 400
+    if not -100 <= rssi <= 0:
+        return jsonify(error="Sensor RSSI is outside the expected range"), 400
+    reading = record_reading(survey_state["location"], rssi, "Windows Wi-Fi adapter")
+    return jsonify(asdict(reading)), 201
 
 
 @app.post("/api/readings")
