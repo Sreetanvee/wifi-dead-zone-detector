@@ -1,4 +1,3 @@
-# Jenkins Declarative Pipeline
 pipeline {
     agent any
     options { timestamps() }
