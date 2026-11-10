@@ -1,62 +1,42 @@
-# Wi-Fi Dead Zone Detector (DevOps mini project)
+# Wi-Fi Dead Zone Detector
 
-A small web app for recording Wi-Fi RSSI measurements by location. Values at or below -75 dBm are marked as weak coverage. A reading is entered manually, so the application works without special Wi-Fi hardware permissions. It is a survey/logging demo, not an automatic radio scanner.
+A Windows Wi-Fi survey app that reads real RSSI from the laptop's currently connected Wi-Fi adapter, labels each measurement with a room name, and flags weak readings. The threshold is **-75 dBm** for this demo; at or below that value is flagged as weak. RSSI values are negative, and values closer to zero are stronger.
 
-## Run locally
+## What reads the Wi-Fi signal?
 
-Requires Python 3.10+.
+The web app runs in Docker, which isolates it from the Windows Wi-Fi adapter. `wifi_agent.py` is a small Windows-side sensor that uses the Windows WLAN API to read the connected adapter's RSSI and sends it to the web app every five seconds. The room label is entered by the person running the agent; Windows cannot tell whether the laptop is in a bedroom.
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python app.py
-```
+The sensor measures the network the laptop is connected to. It does not scan every nearby network or measure internet speed. Availability and precision depend on the wireless adapter and driver.
 
-Open http://localhost:5000. Add a location and RSSI measurement such as `-82` dBm. `/health` is the health endpoint; `/api/readings` returns JSON; the page exports CSV. Data is held in memory and resets when the process restarts.
+## Run the demo
 
-## Run with Docker
+Requirements: Windows, Python 3.10+, and Docker Desktop with its engine running.
 
-Requires Docker Desktop (or Docker Engine) with Compose:
+In PowerShell, go to this folder and start the web app:
 
 ```powershell
 docker compose up --build -d
-docker compose ps
 ```
 
-Open http://localhost:5000. Stop with `docker compose down`. The container uses a non-root user and a slim Python base image.
-
-## Jenkins CI pipeline
-
-1. Push this project to a Git repository (steps below).
-2. Install/start Jenkins and ensure the Jenkins agent has Docker installed and can run `docker` commands. Docker access is a host/agent setup requirement.
-3. In Jenkins, choose **New Item → Pipeline → Pipeline script from SCM**, select Git, enter the repository URL and credentials if private, and set **Script Path** to `Jenkinsfile`.
-4. Save and select **Build Now**. Pipeline checks out code, builds an image tagged with the Jenkins build number, starts a temporary container, checks `/health`, then removes the container.
-
-The Jenkinsfile is written for a Windows Jenkins agent using `bat` and PowerShell. On Linux agents change `bat` to `sh`, replace `%BUILD_NUMBER%` with `$BUILD_NUMBER`, and adjust the smoke-test commands.
-
-## Git workflow
-
-Run these from this project folder:
+Open http://localhost:5000. In a **second** PowerShell window, open this same project folder and start the sensor:
 
 ```powershell
-git init
-git add .
-git commit -m "Build Wi-Fi dead zone detector"
-git branch -M main
-git remote add origin https://github.com/YOUR-USER/wifi-dead-zone-detector.git
-git push -u origin main
+py wifi_agent.py
 ```
 
-Replace the remote URL with a repository you created. For later changes use `git add .`, `git commit -m "Describe change"`, and `git push`.
+Enter a room label such as `Bedroom`. The sensor prints actual RSSI values every five seconds and the web page updates automatically. Walk to another room, stop the agent with Ctrl+C, run it again, and enter the new room label.
 
-## Explain the DevOps parts in your viva
+Stop the web app with `docker compose down`. Readings are held in memory and reset when the app container restarts. Use **Download CSV** to save the current survey.
 
-- **Git** versions source changes and records commits.
-- **Jenkins** automates checkout, image build, and a health-check smoke test on each pipeline run.
-- **Docker** packages the app and pinned Python dependency into a repeatable image.
-- **Compose** provides a simple repeatable way to run the container.
-- **CI flow:** commit/push → Jenkins checkout → Docker build → start container → call health endpoint → cleanup.
-- **Monitoring hook:** `/health` is a basic liveness endpoint that a deployment or monitoring system can query.
+## Docker and Jenkins
 
-For a stronger next step, persist readings in SQLite or add a deployment stage after successful CI. Avoid claiming real automatic Wi-Fi scanning: this version records signal measurements supplied by the user/device.
+- `Dockerfile` packages the Flask web app and pinned Flask dependency as an image.
+- `compose.yaml` runs the web app locally on port 5000, bound to this computer.
+- `Jenkinsfile` checks out the GitHub repository, builds a Docker image, starts a temporary container, calls `/health`, and removes the test container.
+- `wifi_agent.py` runs directly on Windows because a Linux Docker container cannot call the host's Windows WLAN API.
+
+Jenkins is configured as a local Windows service. The pipeline's Docker executable location may need adjustment if Docker Desktop is installed in a different folder on another computer.
+
+## GitHub
+
+Project repository: https://github.com/Sreetanvee/wifi-dead-zone-detector
