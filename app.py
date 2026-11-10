@@ -48,7 +48,6 @@ PAGE = """<!doctype html>
       try{
         const d=await (await fetch('/api/readings')).json();
         const survey=await (await fetch('/api/survey/status')).json();
-        document.querySelector('#location').value=survey.location||document.querySelector('#location').value;
         document.querySelector('#stop').disabled=!survey.active;
         document.querySelector('#survey-status').textContent=survey.active?`Survey active in ${survey.location}. Press Stop survey to finish.`:'Survey stopped.';
         const latest=d.readings[d.readings.length-1];
